@@ -1,0 +1,72 @@
+---
+
+- name: Install and configure postfix to relay via google.
+  hosts: all
+  vars:
+    postfix_dir: /etc/postfix
+    sasl_passwd_src: postfix/sasl/sasl_passwd
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Install debconf-utils
+      package:
+        name: debconf-utils
+        state: present
+
+    - name: Configuring postfix relay host 
+      debconf:
+        name: postfix
+        question: postfix/relayhost
+        value: smtp.gmail.com
+        vtype: string
+
+    - name: Configuring postfix mailer type
+      debconf:
+        name: postfix
+        question: postfix/main_mailer_type
+        value: Satellite system
+        vtype: select
+
+    - name: Install postfix
+      package:
+        name: postfix
+        state: present
+
+    - name: Install bsd-mailx
+      package:
+        name: bsd-mailx
+        state: present
+
+    - name: Installing sasl_passwd
+      copy:
+        src: "{{ sasl_passwd_src }}"
+        dest: "{{ postfix_dir }}/sasl/sasl_passwd"
+        owner: root
+        group: postfix
+        mode: 0640
+      notify: Run postmap
+
+    - name: Updating {{ postfix_dir }}/main.cf to use sasl
+      blockinfile:
+        dest: "{{ postfix_dir }}/main.cf"
+        block: |
+          smtp_sasl_auth_enable = yes
+          smtp_sasl_password_maps = hash:/etc/postfix/sasl/sasl_passwd
+          smtp_sasl_security_options = noanonymous
+          smtp_sasl_tls_security_options = noanonymous
+          smtp_tls_security_level = may
+        marker: "# {mark} ANSIBLE MANAGED sasl BLOCK"
+        insertbefore: "^smtpd_relay_restrictions"
+      notify: Restart Postfix
+
+  handlers:
+    - name: Run postmap
+      shell: postmap {{ postfix_dir }}/sasl/sasl_passwd
+      notify: Restart Postfix
+
+    - name: Restart Postfix
+      systemd:
+        name: postfix
+        state: restarted
+
